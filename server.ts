@@ -122,7 +122,7 @@ async function handleRegister(body: RegisterRequest, res:  ServerResponse<Incomi
         let errorMessage = 'Registration failed';
         let statusCode = 500;
 
-        if (error.code === 'auth/email-already-in-use') {
+        if (error.code === 'auth/email-already-exists') {
             errorMessage = 'Email already in use';
             statusCode = 400;
         } else if (error.code === 'auth/invalid-email') {
