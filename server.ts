@@ -2,15 +2,17 @@
 import * as fs from "node:fs";
 import { getAuth } from "firebase-admin/auth";
 import {IncomingMessage, ServerResponse} from "node:http";
-import {auth, initializeApp} from "firebase-admin";
+import {auth} from "firebase-admin";
 import Auth = auth.Auth;
+
+const firebaseAdmin = require('firebase-admin');
 
 const prodConfig = JSON.parse(fs.readFileSync('prod-config.json', 'utf8'));
 
 const stagingConfig = JSON.parse(fs.readFileSync('staging-config.json', 'utf8'));
 
-const prodApp = initializeApp(prodConfig, 'prod');
-const stagingApp = initializeApp(stagingConfig, 'staging');
+const prodApp = firebaseAdmin.initializeApp(prodConfig, 'prod');
+const stagingApp = firebaseAdmin.initializeApp(stagingConfig, 'staging');
 
 const prodAuth = getAuth(prodApp);
 const stagingAuth = getAuth(stagingApp);
