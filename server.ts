@@ -1,15 +1,9 @@
 ﻿import * as https from "node:https";
 import * as fs from "node:fs";
-import { initializeApp } from 'firebase/app';
-import {
-    getAuth,
-    createUserWithEmailAndPassword,
-    sendPasswordResetEmail,
-    signInWithEmailAndPassword,
-    deleteUser,
-    Auth
-} from 'firebase/auth';
+import { getAuth } from "firebase-admin/auth";
 import {IncomingMessage, ServerResponse} from "node:http";
+import {auth, initializeApp} from "firebase-admin";
+import Auth = auth.Auth;
 
 const prodConfig = JSON.parse(fs.readFileSync('prod-config.json', 'utf8'));
 
@@ -30,14 +24,8 @@ interface RegisterRequest {
     environment?: 'prod' | 'staging';
 }
 
-interface PasswordResetRequest {
-    email: string;
-    environment?: 'prod' | 'staging';
-}
-
 interface DeleteAccountRequest {
-    email: string;
-    password: string;
+    authToken: string;
     environment?: 'prod' | 'staging';
 }
 
@@ -110,7 +98,11 @@ async function handleRegister(body: RegisterRequest, res:  ServerResponse<Incomi
         }
 
         const auth = getAuthInstance(environment);
-        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        const userCredential = await auth.createUser({
+            uid: crypto.randomUUID(),
+            email: email,
+            password: password,
+        });
 
         console.log(`[${new Date().toISOString()}] Account registered: ${email} (${environment})`);
 
@@ -118,8 +110,8 @@ async function handleRegister(body: RegisterRequest, res:  ServerResponse<Incomi
             success: true,
             message: 'Account registered successfully',
             data: {
-                uid: userCredential.user.uid,
-                email: userCredential.user.email,
+                uid: userCredential.uid,
+                email: userCredential.email,
                 environment
             }
         });
@@ -148,76 +140,28 @@ async function handleRegister(body: RegisterRequest, res:  ServerResponse<Incomi
     }
 }
 
-// Password reset handler
-async function handlePasswordReset(body: PasswordResetRequest, res:  ServerResponse<IncomingMessage> & {
-    req: IncomingMessage
-}) {
-    try {
-        const { email, environment = 'prod' } = body;
-
-        if (!email) {
-            sendResponse(res, 400, {
-                success: false,
-                error: 'Email is required'
-            });
-            return;
-        }
-
-        const auth = getAuthInstance(environment);
-        await sendPasswordResetEmail(auth, email);
-
-        console.log(`[${new Date().toISOString()}] Password reset email sent: ${email} (${environment})`);
-
-        sendResponse(res, 200, {
-            success: true,
-            message: 'Password reset email sent successfully'
-        });
-    } catch (error: any) {
-        console.error(`[${new Date().toISOString()}] Password reset error:`, error.message);
-
-        let errorMessage = 'Failed to send password reset email';
-        let statusCode = 500;
-
-        if (error.code === 'auth/user-not-found') {
-            errorMessage = 'No user found with this email';
-            statusCode = 404;
-        } else if (error.code === 'auth/invalid-email') {
-            errorMessage = 'Invalid email format';
-            statusCode = 400;
-        }
-
-        sendResponse(res, statusCode, {
-            success: false,
-            error: errorMessage,
-            code: error.code
-        });
-    }
-}
-
 // Delete account handler
 async function handleDeleteAccount(body: DeleteAccountRequest, res:  ServerResponse<IncomingMessage> & {
     req: IncomingMessage
 }) {
     try {
-        const { email, password, environment = 'prod' } = body;
+        const { authToken, environment = 'prod' } = body;
 
-        if (!email || !password) {
+        if (!authToken) {
             sendResponse(res, 400, {
                 success: false,
-                error: 'Email and password are required'
+                error: 'Auth token is required'
             });
             return;
         }
 
         const auth = getAuthInstance(environment);
 
-        // First, sign in to verify credentials
-        const userCredential = await signInWithEmailAndPassword(auth, email, password);
+        const decodedToken = await auth.verifyIdToken(authToken);
 
-        // Then delete the user
-        await deleteUser(userCredential.user);
+        await auth.deleteUser(decodedToken.uid);
 
-        console.log(`[${new Date().toISOString()}] Account deleted: ${email} (${environment})`);
+        console.log(`[${new Date().toISOString()}] Account deleted: ${decodedToken.uid} (${environment})`);
 
         sendResponse(res, 200, {
             success: true,
@@ -280,10 +224,6 @@ https.createServer(options, async (req, res) => {
         switch (req.url) {
             case '/register':
                 await handleRegister(body, res);
-                break;
-
-            case '/reset-password':
-                await handlePasswordReset(body, res);
                 break;
 
             case '/delete-account':
