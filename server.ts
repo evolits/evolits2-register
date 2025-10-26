@@ -246,7 +246,7 @@ https.createServer(options, async (req, res) => {
             error: 'Internal server error'
         });
     }
-}).listen(PORT, () => {
+}).listen(PORT, '0.0.0.0', () => {
     console.log(`Server running at https://localhost:${PORT}`);
     console.log('\nAvailable endpoints:');
     console.log('  POST /register - Register a new account');
