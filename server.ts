@@ -17,7 +17,7 @@ const prodAuth = getAuth(prodApp);
 const stagingAuth = getAuth(stagingApp);
 
 // Server configuration
-const PORT = 443;
+const PORT = 8443;
 
 interface RegisterRequest {
     email: string;
