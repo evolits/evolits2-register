@@ -199,6 +199,7 @@ async function handleDeleteAccount(body: DeleteAccountRequest, res:  ServerRespo
 
 //Register account, password reset, delete account.
 https.createServer(options, async (req, res) => {
+    console.log(`[${new Date().toISOString()}] Request received: ${req.method} ${req.url}`);
     // Handle CORS preflight
     if (req.method === 'OPTIONS') {
         res.writeHead(200, {
