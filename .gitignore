@@ -146,3 +146,4 @@ key.pem
 cert.pem
 staging-config.json
 prod-config.json
+database.json

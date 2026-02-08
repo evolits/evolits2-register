@@ -4,11 +4,13 @@ import { getAuth } from "firebase-admin/auth";
 import {IncomingMessage, ServerResponse} from "node:http";
 import {auth, credential} from "firebase-admin";
 import Auth = auth.Auth;
+import { MongoClient, Db, Collection } from 'mongodb';
 
 const firebaseAdmin = require('firebase-admin');
 
 const prodConfig = require('./prod-config.json');
 const stagingConfig = require('./staging-config.json');
+const databaseConfig = require('./database.json');
 
 const prodApp = firebaseAdmin.initializeApp({credential: firebaseAdmin.credential.cert(prodConfig)}, 'prod');
 const stagingApp = firebaseAdmin.initializeApp({credential: firebaseAdmin.credential.cert(stagingConfig)}, 'staging');
@@ -16,8 +18,18 @@ const stagingApp = firebaseAdmin.initializeApp({credential: firebaseAdmin.creden
 const prodAuth = getAuth(prodApp);
 const stagingAuth = getAuth(stagingApp);
 
+// MongoDB configuration
+let mongoClient: MongoClient;
+let db: Db;
+let whitelistCollection: Collection<WhitelistDocument>;
+
 // Server configuration
 const PORT = 8443;
+
+interface WhitelistDocument {
+    isActive: boolean;
+    emails: string[];
+}
 
 interface RegisterRequest {
     email: string;
@@ -40,6 +52,56 @@ interface ErrorResponse {
     success: false;
     error: string;
     code?: string;
+}
+
+// Initialize MongoDB connection
+async function initMongoDB() {
+    try {
+        mongoClient = new MongoClient(databaseConfig.MongoDbConnectionString);
+        await mongoClient.connect();
+        console.log('Connected to MongoDB');
+        
+        db = mongoClient.db('evolits-register');
+        whitelistCollection = db.collection<WhitelistDocument>('whitelist');
+        
+        // Check if whitelist document exists, if not create it
+        const existingDoc = await whitelistCollection.findOne({});
+        if (!existingDoc) {
+            await whitelistCollection.insertOne({
+                isActive: true,
+                emails: []
+            });
+            console.log('Created whitelist collection with initial document');
+        } else {
+            console.log('Whitelist collection already exists');
+        }
+    } catch (error) {
+        console.error('Failed to connect to MongoDB:', error);
+        throw error;
+    }
+}
+
+// Check if email is whitelisted
+async function isEmailWhitelisted(email: string): Promise<boolean> {
+    try {
+        const whitelistDoc = await whitelistCollection.findOne({});
+        
+        if (!whitelistDoc) {
+            console.log('No whitelist document found');
+            return false;
+        }
+        
+        // If whitelist is not active, allow all registrations
+        if (!whitelistDoc.isActive) {
+            return true;
+        }
+        
+        // Check if email is in the whitelist
+        return whitelistDoc.emails.includes(email.toLowerCase());
+    } catch (error) {
+        console.error('Error checking whitelist:', error);
+        return false;
+    }
 }
 
 const options = {
@@ -94,6 +156,17 @@ async function handleRegister(body: RegisterRequest, res:  ServerResponse<Incomi
             sendResponse(res, 400, {
                 success: false,
                 error: 'Email and password are required'
+            });
+            return;
+        }
+
+        // Check if email is whitelisted
+        const whitelisted = await isEmailWhitelisted(email);
+        if (!whitelisted) {
+            console.log(`[${new Date().toISOString()}] Registration blocked: ${email} is not whitelisted`);
+            sendResponse(res, 403, {
+                success: false,
+                error: 'Email is not whitelisted for registration'
             });
             return;
         }
@@ -196,8 +269,10 @@ async function handleDeleteAccount(body: DeleteAccountRequest, res:  ServerRespo
     }
 }
 
-//Register account, password reset, delete account.
-https.createServer(options, async (req, res) => {
+// Initialize MongoDB before starting the server
+initMongoDB().then(() => {
+    //Register account, password reset, delete account.
+    https.createServer(options, async (req, res) => {
     console.log(`[${new Date().toISOString()}] Request received: ${req.method} ${req.url}`);
     // Handle CORS preflight
     if (req.method === 'OPTIONS') {
@@ -239,21 +314,35 @@ https.createServer(options, async (req, res) => {
                 });
                 break;
         }
-    } catch (error: any) {
-        console.error(`[${new Date().toISOString()}] Server error:`, error.message);
-        sendResponse(res, 500, {
-            success: false,
-            error: 'Internal server error'
-        });
+        } catch (error: any) {
+            console.error(`[${new Date().toISOString()}] Server error:`, error.message);
+            sendResponse(res, 500, {
+                success: false,
+                error: 'Internal server error'
+            });
+        }
+    }).listen(PORT, '0.0.0.0', () => {
+        console.log(`Server running at https://localhost:${PORT}`);
+        console.log('\nAvailable endpoints:');
+        console.log('  POST /register - Register a new account');
+        console.log('  POST /reset-password - Send password reset email');
+        console.log('  POST /delete-account - Delete an account');
+        console.log('\nExample usage:');
+        console.log(`  curl -X POST https://localhost:${PORT}/register \\`);
+        console.log(`    -H "Content-Type: application/json" \\`);
+        console.log(`    -d '{"email":"user@example.com","password":"password123","environment":"prod"}'`);
+    });
+}).catch(error => {
+    console.error('Failed to initialize server:', error);
+    process.exit(1);
+});
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+    console.log('\nShutting down gracefully...');
+    if (mongoClient) {
+        await mongoClient.close();
+        console.log('MongoDB connection closed');
     }
-}).listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running at https://localhost:${PORT}`);
-    console.log('\nAvailable endpoints:');
-    console.log('  POST /register - Register a new account');
-    console.log('  POST /reset-password - Send password reset email');
-    console.log('  POST /delete-account - Delete an account');
-    console.log('\nExample usage:');
-    console.log(`  curl -X POST https://localhost:${PORT}/register \\`);
-    console.log(`    -H "Content-Type: application/json" \\`);
-    console.log(`    -d '{"email":"user@example.com","password":"password123","environment":"prod"}'`);
+    process.exit(0);
 });
