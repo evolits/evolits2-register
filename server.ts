@@ -125,7 +125,7 @@ async function isEmailWhitelisted(email: string): Promise<{ allowed: boolean; er
         }
 
         // Check if email is in the whitelist
-        return { allowed: whitelistDoc.emails.includes(email.toLowerCase()) };
+        return { allowed: whitelistDoc.emails.some(e => e.toLowerCase() === email.toLowerCase()) };
     } catch (error) {
         logger.error('Error checking whitelist', { error });
         return { allowed: false, error: true };
