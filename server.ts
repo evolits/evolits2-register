@@ -5,8 +5,36 @@ import {IncomingMessage, ServerResponse} from "node:http";
 import {auth, credential} from "firebase-admin";
 import Auth = auth.Auth;
 import { MongoClient, Db, Collection } from 'mongodb';
+import winston from 'winston';
+import LokiTransport from 'winston-loki';
 
 const firebaseAdmin = require('firebase-admin');
+const appConfig = require('./config.json');
+
+// Grafana Loki logger
+const logger = winston.createLogger({
+    level: 'info',
+    format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.json()
+    ),
+    transports: [
+        new winston.transports.Console({
+            format: winston.format.combine(
+                winston.format.colorize(),
+                winston.format.simple()
+            )
+        }),
+        new LokiTransport({
+            host: appConfig.LokiEndpoint,
+            basicAuth: `${appConfig.LokiUsername}:${appConfig.LokiPassword}`,
+            labels: { app: 'evolits2-register' },
+            json: true,
+            replaceTimestamp: true,
+            onConnectionError: (err: any) => console.error('Loki connection error:', err),
+        })
+    ]
+});
 
 const prodConfig = require('./prod-config.json');
 const stagingConfig = require('./staging-config.json');
@@ -59,7 +87,7 @@ async function initMongoDB() {
     try {
         mongoClient = new MongoClient(databaseConfig.MongoDbConnectionString);
         await mongoClient.connect();
-        console.log('Connected to MongoDB');
+        logger.info('Connected to MongoDB');
         
         db = mongoClient.db('evolits-register');
         whitelistCollection = db.collection<WhitelistDocument>('whitelist');
@@ -71,36 +99,36 @@ async function initMongoDB() {
                 isActive: true,
                 emails: []
             });
-            console.log('Created whitelist collection with initial document');
+            logger.info('Created whitelist collection with initial document');
         } else {
-            console.log('Whitelist collection already exists');
+            logger.info('Whitelist collection already exists');
         }
     } catch (error) {
-        console.error('Failed to connect to MongoDB:', error);
+        logger.error('Failed to connect to MongoDB', { error });
         throw error;
     }
 }
 
 // Check if email is whitelisted
-async function isEmailWhitelisted(email: string): Promise<boolean> {
+async function isEmailWhitelisted(email: string): Promise<{ allowed: boolean; error?: boolean }> {
     try {
         const whitelistDoc = await whitelistCollection.findOne({});
-        
+
         if (!whitelistDoc) {
-            console.log('No whitelist document found');
-            return false;
+            logger.warn('No whitelist document found');
+            return { allowed: false };
         }
-        
+
         // If whitelist is not active, allow all registrations
         if (!whitelistDoc.isActive) {
-            return true;
+            return { allowed: true };
         }
-        
+
         // Check if email is in the whitelist
-        return whitelistDoc.emails.includes(email.toLowerCase());
+        return { allowed: whitelistDoc.emails.includes(email.toLowerCase()) };
     } catch (error) {
-        console.error('Error checking whitelist:', error);
-        return false;
+        logger.error('Error checking whitelist', { error });
+        return { allowed: false, error: true };
     }
 }
 
@@ -161,9 +189,16 @@ async function handleRegister(body: RegisterRequest, res:  ServerResponse<Incomi
         }
 
         // Check if email is whitelisted
-        const whitelisted = await isEmailWhitelisted(email);
-        if (!whitelisted) {
-            console.log(`[${new Date().toISOString()}] Registration blocked: ${email} is not whitelisted`);
+        const whitelistResult = await isEmailWhitelisted(email);
+        if (whitelistResult.error) {
+            sendResponse(res, 500, {
+                success: false,
+                error: 'Internal server error'
+            });
+            return;
+        }
+        if (!whitelistResult.allowed) {
+            logger.warn('Registration blocked: email not whitelisted', { email });
             sendResponse(res, 403, {
                 success: false,
                 error: 'Email is not whitelisted for registration'
@@ -178,7 +213,7 @@ async function handleRegister(body: RegisterRequest, res:  ServerResponse<Incomi
             password: password,
         });
 
-        console.log(`[${new Date().toISOString()}] Account registered: ${email} (${environment})`);
+        logger.info('Account registered', { email, environment });
 
         sendResponse(res, 200, {
             success: true,
@@ -190,7 +225,7 @@ async function handleRegister(body: RegisterRequest, res:  ServerResponse<Incomi
             }
         });
     } catch (error: any) {
-        console.error(`[${new Date().toISOString()}] Registration error:`, error.message);
+        logger.error('Registration error', { error: error.message, code: error.code });
 
         let errorMessage = 'Registration failed';
         let statusCode = 500;
@@ -235,14 +270,14 @@ async function handleDeleteAccount(body: DeleteAccountRequest, res:  ServerRespo
 
         await auth.deleteUser(decodedToken.uid);
 
-        console.log(`[${new Date().toISOString()}] Account deleted: ${decodedToken.uid} (${environment})`);
+        logger.info('Account deleted', { uid: decodedToken.uid, environment });
 
         sendResponse(res, 200, {
             success: true,
             message: 'Account deleted successfully'
         });
     } catch (error: any) {
-        console.error(`[${new Date().toISOString()}] Delete account error:`, error.message);
+        logger.error('Delete account error', { error: error.message, code: error.code });
 
         let errorMessage = 'Failed to delete account';
         let statusCode = 500;
@@ -273,7 +308,7 @@ async function handleDeleteAccount(body: DeleteAccountRequest, res:  ServerRespo
 initMongoDB().then(() => {
     //Register account, password reset, delete account.
     https.createServer(options, async (req, res) => {
-    console.log(`[${new Date().toISOString()}] Request received: ${req.method} ${req.url}`);
+    logger.info('Request received', { method: req.method, url: req.url });
     // Handle CORS preflight
     if (req.method === 'OPTIONS') {
         res.writeHead(200, {
@@ -315,34 +350,28 @@ initMongoDB().then(() => {
                 break;
         }
         } catch (error: any) {
-            console.error(`[${new Date().toISOString()}] Server error:`, error.message);
+            logger.error('Server error', { error: error.message });
             sendResponse(res, 500, {
                 success: false,
                 error: 'Internal server error'
             });
         }
     }).listen(PORT, '0.0.0.0', () => {
-        console.log(`Server running at https://localhost:${PORT}`);
-        console.log('\nAvailable endpoints:');
-        console.log('  POST /register - Register a new account');
-        console.log('  POST /reset-password - Send password reset email');
-        console.log('  POST /delete-account - Delete an account');
-        console.log('\nExample usage:');
-        console.log(`  curl -X POST https://localhost:${PORT}/register \\`);
-        console.log(`    -H "Content-Type: application/json" \\`);
-        console.log(`    -d '{"email":"user@example.com","password":"password123","environment":"prod"}'`);
+        logger.info(`Server running at https://localhost:${PORT}`);
+        logger.info('Available endpoints: POST /register, POST /reset-password, POST /delete-account');
     });
 }).catch(error => {
-    console.error('Failed to initialize server:', error);
+    logger.error('Failed to initialize server', { error });
     process.exit(1);
 });
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
-    console.log('\nShutting down gracefully...');
+    logger.info('Shutting down gracefully...');
     if (mongoClient) {
         await mongoClient.close();
-        console.log('MongoDB connection closed');
+        logger.info('MongoDB connection closed');
     }
+    logger.close();
     process.exit(0);
 });
