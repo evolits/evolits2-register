@@ -1,10 +1,10 @@
 ﻿import * as https from "node:https";
 import * as fs from "node:fs";
-import { getAuth } from "firebase-admin/auth";
+import {getAuth} from "firebase-admin/auth";
 import {IncomingMessage, ServerResponse} from "node:http";
 import {auth, credential} from "firebase-admin";
 import Auth = auth.Auth;
-import { MongoClient, Db, Collection } from 'mongodb';
+import {MongoClient, Db, Collection} from 'mongodb';
 import winston from 'winston';
 import LokiTransport from 'winston-loki';
 
@@ -28,7 +28,7 @@ const logger = winston.createLogger({
         new LokiTransport({
             host: appConfig.LokiEndpoint,
             basicAuth: `${appConfig.LokiUsername}:${appConfig.LokiPassword}`,
-            labels: { app: 'evolits2-register' },
+            labels: {app: 'evolits2-register'},
             json: true,
             replaceTimestamp: true,
             onConnectionError: (err: any) => console.error('Loki connection error:', err),
@@ -88,10 +88,10 @@ async function initMongoDB() {
         mongoClient = new MongoClient(databaseConfig.MongoDbConnectionString);
         await mongoClient.connect();
         logger.info('Connected to MongoDB');
-        
+
         db = mongoClient.db('evolits-register');
         whitelistCollection = db.collection<WhitelistDocument>('whitelist');
-        
+
         // Check if whitelist document exists, if not create it
         const existingDoc = await whitelistCollection.findOne({});
         if (!existingDoc) {
@@ -104,31 +104,34 @@ async function initMongoDB() {
             logger.info('Whitelist collection already exists');
         }
     } catch (error) {
-        logger.error('Failed to connect to MongoDB', { error });
+        logger.error('Failed to connect to MongoDB', {error});
         throw error;
     }
 }
 
 // Check if email is whitelisted
 async function isEmailWhitelisted(email: string): Promise<{ allowed: boolean; error?: boolean }> {
+    if (!databaseConfig.Whitelist) {
+        return {allowed: true}
+    }
     try {
         const whitelistDoc = await whitelistCollection.findOne({});
 
         if (!whitelistDoc) {
             logger.warn('No whitelist document found');
-            return { allowed: false };
+            return {allowed: false};
         }
 
         // If whitelist is not active, allow all registrations
         if (!whitelistDoc.isActive) {
-            return { allowed: true };
+            return {allowed: true};
         }
 
         // Check if email is in the whitelist
-        return { allowed: whitelistDoc.emails.some(e => e.toLowerCase() === email.toLowerCase()) };
+        return {allowed: whitelistDoc.emails.some(e => e.toLowerCase() === email.toLowerCase())};
     } catch (error) {
-        logger.error('Error checking whitelist', { error });
-        return { allowed: false, error: true };
+        logger.error('Error checking whitelist', {error});
+        return {allowed: false, error: true};
     }
 }
 
@@ -161,7 +164,7 @@ function parseBody(req: IncomingMessage): Promise<any> {
 }
 
 // Helper function to send JSON response
-function sendResponse(res:  ServerResponse<IncomingMessage> & {
+function sendResponse(res: ServerResponse<IncomingMessage> & {
     req: IncomingMessage
 }, statusCode: number, data: SuccessResponse | ErrorResponse) {
     res.writeHead(statusCode, {
@@ -174,11 +177,11 @@ function sendResponse(res:  ServerResponse<IncomingMessage> & {
 }
 
 // Register account handler
-async function handleRegister(body: RegisterRequest, res:  ServerResponse<IncomingMessage> & {
+async function handleRegister(body: RegisterRequest, res: ServerResponse<IncomingMessage> & {
     req: IncomingMessage
 }) {
     try {
-        const { email, password, environment = 'prod' } = body;
+        const {email, password, environment = 'prod'} = body;
 
         if (!email || !password) {
             sendResponse(res, 400, {
@@ -198,7 +201,7 @@ async function handleRegister(body: RegisterRequest, res:  ServerResponse<Incomi
             return;
         }
         if (!whitelistResult.allowed) {
-            logger.warn('Registration blocked: email not whitelisted', { email });
+            logger.warn('Registration blocked: email not whitelisted', {email});
             sendResponse(res, 403, {
                 success: false,
                 error: 'Email is not whitelisted for registration'
@@ -213,7 +216,7 @@ async function handleRegister(body: RegisterRequest, res:  ServerResponse<Incomi
             password: password,
         });
 
-        logger.info('Account registered', { email, environment });
+        logger.info('Account registered', {email, environment});
 
         sendResponse(res, 200, {
             success: true,
@@ -225,7 +228,7 @@ async function handleRegister(body: RegisterRequest, res:  ServerResponse<Incomi
             }
         });
     } catch (error: any) {
-        logger.error('Registration error', { error: error.message, code: error.code });
+        logger.error('Registration error', {error: error.message, code: error.code});
 
         let errorMessage = 'Registration failed';
         let statusCode = 500;
@@ -250,11 +253,11 @@ async function handleRegister(body: RegisterRequest, res:  ServerResponse<Incomi
 }
 
 // Delete account handler
-async function handleDeleteAccount(body: DeleteAccountRequest, res:  ServerResponse<IncomingMessage> & {
+async function handleDeleteAccount(body: DeleteAccountRequest, res: ServerResponse<IncomingMessage> & {
     req: IncomingMessage
 }) {
     try {
-        const { authToken, environment = 'prod' } = body;
+        const {authToken, environment = 'prod'} = body;
 
         if (!authToken) {
             sendResponse(res, 400, {
@@ -270,14 +273,14 @@ async function handleDeleteAccount(body: DeleteAccountRequest, res:  ServerRespo
 
         await auth.deleteUser(decodedToken.uid);
 
-        logger.info('Account deleted', { uid: decodedToken.uid, environment });
+        logger.info('Account deleted', {uid: decodedToken.uid, environment});
 
         sendResponse(res, 200, {
             success: true,
             message: 'Account deleted successfully'
         });
     } catch (error: any) {
-        logger.error('Delete account error', { error: error.message, code: error.code });
+        logger.error('Delete account error', {error: error.message, code: error.code});
 
         let errorMessage = 'Failed to delete account';
         let statusCode = 500;
@@ -308,49 +311,49 @@ async function handleDeleteAccount(body: DeleteAccountRequest, res:  ServerRespo
 initMongoDB().then(() => {
     //Register account, password reset, delete account.
     https.createServer(options, async (req, res) => {
-    logger.info('Request received', { method: req.method, url: req.url });
-    // Handle CORS preflight
-    if (req.method === 'OPTIONS') {
-        res.writeHead(200, {
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'POST, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type'
-        });
-        res.end();
-        return;
-    }
-
-    // Only allow POST requests
-    if (req.method !== 'POST') {
-        sendResponse(res, 405, {
-            success: false,
-            error: 'Method not allowed'
-        });
-        return;
-    }
-
-    try {
-        const body = await parseBody(req);
-
-        // Route to appropriate handler based on URL
-        switch (req.url) {
-            case '/register':
-                await handleRegister(body, res);
-                break;
-
-            case '/delete-account':
-                await handleDeleteAccount(body, res);
-                break;
-
-            default:
-                sendResponse(res, 404, {
-                    success: false,
-                    error: 'Endpoint not found. Available endpoints: /register, /reset-password, /delete-account'
-                });
-                break;
+        logger.info('Request received', {method: req.method, url: req.url});
+        // Handle CORS preflight
+        if (req.method === 'OPTIONS') {
+            res.writeHead(200, {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'POST, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type'
+            });
+            res.end();
+            return;
         }
+
+        // Only allow POST requests
+        if (req.method !== 'POST') {
+            sendResponse(res, 405, {
+                success: false,
+                error: 'Method not allowed'
+            });
+            return;
+        }
+
+        try {
+            const body = await parseBody(req);
+
+            // Route to appropriate handler based on URL
+            switch (req.url) {
+                case '/register':
+                    await handleRegister(body, res);
+                    break;
+
+                case '/delete-account':
+                    await handleDeleteAccount(body, res);
+                    break;
+
+                default:
+                    sendResponse(res, 404, {
+                        success: false,
+                        error: 'Endpoint not found. Available endpoints: /register, /reset-password, /delete-account'
+                    });
+                    break;
+            }
         } catch (error: any) {
-            logger.error('Server error', { error: error.message });
+            logger.error('Server error', {error: error.message});
             sendResponse(res, 500, {
                 success: false,
                 error: 'Internal server error'
@@ -361,7 +364,7 @@ initMongoDB().then(() => {
         logger.info('Available endpoints: POST /register, POST /reset-password, POST /delete-account');
     });
 }).catch(error => {
-    logger.error('Failed to initialize server', { error });
+    logger.error('Failed to initialize server', {error});
     process.exit(1);
 });
 
