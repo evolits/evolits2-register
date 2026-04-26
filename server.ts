@@ -111,7 +111,7 @@ async function initMongoDB() {
 
 // Check if email is whitelisted
 async function isEmailWhitelisted(email: string): Promise<{ allowed: boolean; error?: boolean }> {
-    if (!databaseConfig.Whitelist) {
+    if (databaseConfig.Whitelist === "false") {
         return {allowed: true}
     }
     try {
